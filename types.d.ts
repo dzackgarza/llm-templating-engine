@@ -1,97 +1,67 @@
-/**
- * Type definitions for template-parsing-engine
- * 
- * Use these types when calling the template-parsing-engine CLI from TypeScript/Node.js
- */
+export interface TemplateReference {
+  path?: string;
+  text?: string;
+  name?: string;
+}
 
-/** File variable specification */
-export interface FileVariable {
-  /** Variable name for template substitution */
+export interface TextFileBinding {
   name: string;
-  /** Path to file containing variable content */
   path: string;
 }
 
-/** Variable specification combining string and file variables */
-export interface VariableSpec {
-  /** String variables for template substitution */
-  string_vars?: Record<string, string>;
-  /** File variables to read and substitute */
-  file_vars?: FileVariable[];
+export interface Bindings {
+  data?: Record<string, unknown>;
+  text_files?: TextFileBinding[];
 }
 
-/** Request to render a template */
-export interface RenderRequest {
-  /** Path to the template file (absolute or relative to PROMPTS_DIR) */
-  template_path: string;
-  /** Output mode: 'full' includes frontmatter, 'body' is template body only */
-  output_mode?: 'full' | 'body';
-  /** Variables for template substitution */
-  variables?: VariableSpec;
-  /** Additional paths to search for includes/imports */
+export interface TemplateOptions {
   search_paths?: string[];
+  render_mode?: "body" | "document";
+  strict_undefined?: boolean;
 }
 
-/** Rendered template result data */
-export interface RenderResultData {
-  /** Rendered template content */
-  content: string;
-  /** Parsed YAML frontmatter from the template */
-  frontmatter: Record<string, any>;
+export interface TemplateDocument {
+  path?: string | null;
+  name?: string | null;
+  frontmatter: Record<string, unknown>;
+  body_template: string;
 }
 
-/** Successful render response */
-export interface RenderResponseSuccess {
-  /** Always true for success */
-  ok: true;
-  /** Rendered template result */
-  result: RenderResultData;
+export interface RenderedTemplate {
+  body: string;
+  document: string;
 }
 
-/** Error render response */
-export interface RenderResponseError {
-  /** Always false for errors */
-  ok: false;
-  /** Error message */
-  error: string;
-  /** Error type for programmatic handling */
-  error_type: 'MissingVariablesError' | 'TemplateFormatError' | 'FileNotFoundError' | 'TemplateNotFound' | 'UnknownError';
+export interface InspectTemplateRequest {
+  template: TemplateReference;
+  options?: TemplateOptions;
 }
 
-/** Union type for responses */
-export type RenderResponse = RenderResponseSuccess | RenderResponseError;
-
-/**
- * Helper function to call template-parsing-engine from TypeScript
- * 
- * @param request - The render request
- * @returns Promise resolving to the render response
- */
-export async function renderTemplate(request: RenderRequest): Promise<RenderResponse> {
-  const { spawn } = await import('child_process');
-  
-  return new Promise((resolve, reject) => {
-    const proc = spawn('uv', ['run', 'template-parsing-engine']);
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout.on('data', (data: Buffer) => stdout += data.toString());
-    proc.stderr.on('data', (data: Buffer) => stderr += data.toString());
-    proc.on('close', (code: number | null) => {
-      if (code !== 0) {
-        reject(new Error(stderr || `Process exited with code ${code}`));
-      } else {
-        try {
-          resolve(JSON.parse(stdout) as RenderResponse);
-        } catch (e) {
-          reject(new Error(`Failed to parse JSON response: ${stdout}`));
-        }
-      }
-    });
-
-    proc.stdin.write(JSON.stringify(request));
-    proc.stdin.end();
-  });
+export interface InspectTemplateResponse {
+  template: TemplateDocument;
 }
 
-export default renderTemplate;
+export interface RenderTemplateRequest {
+  template: TemplateReference;
+  bindings?: Bindings;
+  options?: TemplateOptions;
+}
+
+export interface RenderTemplateResponse {
+  template: TemplateDocument;
+  rendered: RenderedTemplate;
+}
+
+export interface ValidateTemplateResponse {
+  valid: boolean;
+  missing_bindings: string[];
+}
+
+export interface ErrorDetail {
+  type: string;
+  message: string;
+}
+
+export interface ErrorResponse {
+  error: ErrorDetail;
+}

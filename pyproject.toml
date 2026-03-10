@@ -1,12 +1,12 @@
 [project]
-name = "template-parsing-engine"
+name = "llm-templating-engine"
 version = "0.1.0"
-description = "Standalone template parsing engine for Jinja2/YAML markdown templates"
+description = "Standalone prompt templating engine for Jinja2 and YAML frontmatter"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "you@example.com"}
+    {name = "dzack"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -21,6 +21,7 @@ dependencies = [
     "jinja2>=3.1.0",
     "pyyaml>=6.0",
     "pydantic>=2.0",
+    "typer>=0.16.0",
 ]
 
 [project.optional-dependencies]
@@ -32,19 +33,22 @@ dev = [
 ]
 
 [project.scripts]
-template-parsing-engine = "template_parsing_engine.cli:main"
+llm-templating-engine = "llm_templating_engine.cli:main"
+llm-template-render = "llm_templating_engine.cli:render_main"
+llm-template-inspect = "llm_templating_engine.cli:inspect_main"
+llm-template-validate = "llm_templating_engine.cli:validate_main"
 
 [project.urls]
-Homepage = "https://github.com/dzackgarza/template-parsing-engine"
-Repository = "https://github.com/dzackgarza/template-parsing-engine"
-Issues = "https://github.com/dzackgarza/template-parsing-engine/issues"
+Homepage = "https://github.com/dzackgarza/llm-templating-engine"
+Repository = "https://github.com/dzackgarza/llm-templating-engine"
+Issues = "https://github.com/dzackgarza/llm-templating-engine/issues"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/template_parsing_engine"]
+packages = ["src/llm_templating_engine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

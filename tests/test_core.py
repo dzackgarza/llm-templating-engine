@@ -1,224 +1,167 @@
-"""Tests for the core templating functionality."""
+"""Tests for the templating-engine core contracts."""
 
+from __future__ import annotations
+
+import json
 from pathlib import Path
 
 import pytest
 
-from template_parsing_engine.core import (
-    MissingVariablesError,
-    RenderResult,
-    TemplateFormatError,
-    _dedupe_paths,
-    _reconstruct_frontmatter,
-    _split_frontmatter,
-    _template_name_for_path,
-    build_prompt_environment,
-    default_prompts_dir,
-    load_micro_agent,
-    render_body,
+from llm_templating_engine import (
+    Bindings,
+    InspectTemplateRequest,
+    RenderTemplateRequest,
+    TemplateOptions,
+    TemplateReference,
+    TextFileBinding,
+    inspect_template,
     render_template,
-    resolve_prompt_path,
+    validate_template,
 )
 
 
-class TestSplitFrontmatter:
-    """Tests for frontmatter parsing."""
+def test_inspect_template_loads_frontmatter_and_body(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    template.write_text("---\ndescription: Review prompt\n---\n\nReview {{ ticket.title }}")
 
-    def test_standard_frontmatter(self):
-        content = "---\nkey: value\n---\n\nbody content"
-        frontmatter, body = _split_frontmatter(content)
-        assert frontmatter == {"key": "value"}
-        assert body == "body content"
-
-    def test_legacy_frontmatter(self):
-        content = "key: value\n---\nbody content"
-        frontmatter, body = _split_frontmatter(content)
-        assert frontmatter == {"key": "value"}
-        assert body == "body content"
-
-    def test_no_frontmatter(self):
-        content = "just body content"
-        frontmatter, body = _split_frontmatter(content)
-        assert frontmatter == {}
-        assert body == "just body content"
-
-    def test_multiline_body(self):
-        content = "---\nkey: value\n---\n\nline1\nline2\nline3"
-        frontmatter, body = _split_frontmatter(content)
-        assert frontmatter == {"key": "value"}
-        assert body == "line1\nline2\nline3"
-
-    def test_invalid_yaml(self):
-        content = "---\ninvalid: [unclosed\n---\nbody"
-        with pytest.raises(TemplateFormatError):
-            _split_frontmatter(content)
-
-
-class TestLoadMicroAgent:
-    """Tests for loading micro-agent templates."""
-
-    def test_load_basic_template(self, tmp_path):
-        template = tmp_path / "test.md"
-        template.write_text("---\ndescription: Test\n---\n\n# Hello")
-
-        agent = load_micro_agent(str(template))
-        assert agent.frontmatter == {"description": "Test"}
-        assert agent.body == "# Hello"
-        assert agent.system is None
-
-    def test_load_with_system_prompt(self, tmp_path):
-        template = tmp_path / "test.md"
-        template.write_text("---\nsystem: You are a helpful assistant\n---\n\n# Hello")
-
-        agent = load_micro_agent(str(template))
-        assert agent.system == "You are a helpful assistant"
-
-    def test_load_missing_file(self):
-        with pytest.raises(FileNotFoundError):
-            load_micro_agent("/nonexistent/path/template.md")
-
-
-class TestRenderBody:
-    """Tests for rendering template bodies."""
-
-    def test_simple_variable(self):
-        result = render_body("Hello, {{ name }}!", name="Alice")
-        assert result == "Hello, Alice!"
-
-    def test_multiple_variables(self):
-        result = render_body("{{ greeting }}, {{ name }}!", greeting="Hi", name="Bob")
-        assert result == "Hi, Bob!"
-
-    def test_no_variables(self):
-        result = render_body("Static content")
-        assert result == "Static content"
-
-
-class TestRenderTemplate:
-    """Tests for the high-level render_template API."""
-
-    def test_render_basic(self, tmp_path):
-        template = tmp_path / "test.md"
-        template.write_text("---\ndescription: Test\n---\n\nHello, {{ name }}!")
-
-        result = render_template(
-            str(template),
-            variables={"string_vars": {"name": "Alice"}},
-            output_mode="body",
+    response = inspect_template(
+        InspectTemplateRequest(
+            template=TemplateReference(path=str(template)),
         )
-        assert isinstance(result, RenderResult)
-        assert result.content == "Hello, Alice!"
-        assert result.frontmatter == {"description": "Test"}
-        assert result.output_mode == "body"
+    )
 
-    def test_render_full(self, tmp_path):
-        template = tmp_path / "test.md"
-        template.write_text("---\ndescription: Test\n---\n\nHello, {{ name }}!")
+    assert response.template.path == str(template.resolve())
+    assert response.template.frontmatter == {"description": "Review prompt"}
+    assert response.template.body_template == "Review {{ ticket.title }}"
 
-        result = render_template(
-            str(template),
-            variables={"string_vars": {"name": "Alice"}},
-            output_mode="full",
+
+def test_render_template_renders_structured_data_and_text_files(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    diff_file = tmp_path / "diff.txt"
+    template.write_text(
+        "---\n"
+        "description: Review prompt\n"
+        "---\n\n"
+        "Ticket {{ ticket.id }}: {{ ticket.title }}\n"
+        "{{ diff }}"
+    )
+    diff_file.write_text("line one\nline two")
+
+    response = render_template(
+        RenderTemplateRequest(
+            template=TemplateReference(path=str(template)),
+            bindings=Bindings(
+                data={"ticket": {"id": 42, "title": "Broken import"}},
+                text_files=[TextFileBinding(name="diff", path=str(diff_file))],
+            ),
         )
-        assert "---" in result.content
-        assert "description: Test" in result.content
-        assert "Hello, Alice!" in result.content
+    )
 
-    def test_render_with_file_variable(self, tmp_path):
-        # Create content file
-        content_file = tmp_path / "content.txt"
-        content_file.write_text("File content here")
+    assert response.template.frontmatter == {"description": "Review prompt"}
+    assert response.rendered.body == "Ticket 42: Broken import\nline one\nline two"
+    assert response.rendered.document == (
+        "---\ndescription: Review prompt\n---\n\nTicket 42: Broken import\nline one\nline two"
+    )
 
-        # Create template
-        template = tmp_path / "test.md"
-        template.write_text("---\n---\n\nContent: {{ content }}")
 
-        result = render_template(
-            str(template),
-            variables={"file_vars": [{"name": "content", "path": str(content_file)}]},
-            output_mode="body",
+def test_render_template_supports_inline_text_with_logical_name(tmp_path: Path) -> None:
+    snippets = tmp_path / "snippets"
+    snippets.mkdir()
+    partial = snippets / "partial.md"
+    partial.write_text("---\nlabel: partial\n---\n\n{{ suffix }}")
+
+    response = render_template(
+        RenderTemplateRequest(
+            template=TemplateReference(
+                text=(
+                    "---\n"
+                    "description: Inline prompt\n"
+                    "---\n\n"
+                    "Hello {{ name }} {% include './partial.md' %}"
+                ),
+                name=str(snippets / "main.md"),
+            ),
+            bindings=Bindings(data={"name": "Alice", "suffix": "there"}),
+            options=TemplateOptions(search_paths=[str(snippets)]),
         )
-        assert "File content here" in result.content
+    )
 
-    def test_render_missing_required_variable(self, tmp_path):
-        template = tmp_path / "test.md"
-        template.write_text(
-            "---\ninputs:\n  - name: required_var\n    required: true\n---\n\n{{ required_var }}"
+    assert response.template.name == str((snippets / "main.md").resolve())
+    assert response.rendered.body == "Hello Alice there"
+
+
+def test_validate_template_reports_missing_bindings(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    template.write_text("{{ ticket.title }}\n{{ diff }}\n{{ extra }}")
+
+    response = validate_template(
+        request=RenderTemplateRequest(
+            template=TemplateReference(path=str(template)),
+            bindings=Bindings(data={"ticket": {"title": "Broken import"}}),
+        )
+    )
+
+    assert response.valid is False
+    assert response.missing_bindings == ["diff", "extra"]
+
+
+def test_validate_template_accepts_complete_bindings(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    diff_file = tmp_path / "diff.txt"
+    template.write_text("{{ ticket.title }}\n{{ diff }}")
+    diff_file.write_text("line one")
+
+    response = validate_template(
+        request=RenderTemplateRequest(
+            template=TemplateReference(path=str(template)),
+            bindings=Bindings(
+                data={"ticket": {"title": "Broken import"}},
+                text_files=[TextFileBinding(name="diff", path=str(diff_file))],
+            ),
+        )
+    )
+
+    assert response.valid is True
+    assert response.missing_bindings == []
+
+
+def test_render_template_rejects_duplicate_binding_names(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    diff_file = tmp_path / "diff.txt"
+    template.write_text("{{ diff }}")
+    diff_file.write_text("line one")
+
+    with pytest.raises(ValueError):
+        render_template(
+            RenderTemplateRequest(
+                template=TemplateReference(path=str(template)),
+                bindings=Bindings(
+                    data={"diff": "inline"},
+                    text_files=[TextFileBinding(name="diff", path=str(diff_file))],
+                ),
+            )
         )
 
-        with pytest.raises(MissingVariablesError):
-            render_template(str(template), output_mode="body")
+
+def test_template_reference_requires_one_source() -> None:
+    with pytest.raises(ValueError):
+        TemplateReference()
+
+    with pytest.raises(ValueError):
+        TemplateReference(path="a.md", text="{{ name }}")
 
 
-class TestPathFunctions:
-    """Tests for path-related utilities."""
+def test_render_response_round_trips_as_json(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    template.write_text("Hello {{ name }}")
 
-    def test_default_prompts_dir(self):
-        result = default_prompts_dir()
-        assert isinstance(result, Path)
-
-    def test_resolve_prompt_path_absolute(self):
-        result = resolve_prompt_path("/absolute/path/to/template.md")
-        assert result == Path("/absolute/path/to/template.md")
-
-    def test_dedupe_paths(self):
-        paths = [Path("/a"), Path("/b"), Path("/a")]  # /a is duplicated
-        result = _dedupe_paths(paths)
-        assert len(result) == 2
-        assert result[0] == Path("/a").resolve()
-        assert result[1] == Path("/b").resolve()
-
-    def test_template_name_for_path_within_prompts(self, tmp_path, monkeypatch):
-        # Mock default_prompts_dir to return our temp path
-        prompts_dir = tmp_path / "prompts"
-        prompts_dir.mkdir()
-
-        def mock_default():
-            return prompts_dir
-
-        monkeypatch.setattr(
-            "template_parsing_engine.core.default_prompts_dir",
-            mock_default,
+    response = render_template(
+        RenderTemplateRequest(
+            template=TemplateReference(path=str(template)),
+            bindings=Bindings(data={"name": "Alice"}),
         )
+    )
 
-        template = prompts_dir / "subdir" / "template.md"
-        template.parent.mkdir(parents=True)
-
-        result = _template_name_for_path(template)
-        # Should return relative path when inside prompts_dir
-        assert "subdir/template.md" in result or "subdir\\template.md" in result
-
-
-class TestBuildEnvironment:
-    """Tests for building Jinja environments."""
-
-    def test_build_basic_environment(self):
-        env = build_prompt_environment()
-        assert env is not None
-
-    def test_build_with_template_path(self, tmp_path):
-        template = tmp_path / "test.md"
-        template.touch()
-        env = build_prompt_environment(str(template))
-        assert env is not None
-
-
-class TestReconstructFrontmatter:
-    """Tests for frontmatter reconstruction."""
-
-    def test_reconstruct_simple(self):
-        frontmatter = {"description": "Test"}
-        result = _reconstruct_frontmatter(frontmatter)
-        assert result.startswith("---")
-        assert "description: Test" in result
-        assert result.endswith("---\n\n")
-
-    def test_reconstruct_empty(self):
-        result = _reconstruct_frontmatter({})
-        assert result == ""
-
-    def test_reconstruct_multiple_fields(self):
-        frontmatter = {"description": "Test", "mode": "primary"}
-        result = _reconstruct_frontmatter(frontmatter)
-        assert "description: Test" in result
-        assert "mode: primary" in result
+    payload = json.loads(response.model_dump_json())
+    assert payload["template"]["body_template"] == "Hello {{ name }}"
+    assert payload["rendered"]["body"] == "Hello Alice"

@@ -1,288 +1,105 @@
-"""Tests for the CLI interface."""
+"""CLI integration tests for llm-templating-engine."""
+
+from __future__ import annotations
 
 import json
-import sys
+import subprocess
+from pathlib import Path
 
-from template_parsing_engine.cli import main
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-class TestCLIJSONMode:
-    """Tests for CLI JSON input/output mode."""
+def run_cli(
+    *args: str,
+    stdin: str | None = None,
+    script: str = "llm-templating-engine",
+) -> subprocess.CompletedProcess[str]:
+    """Run a console script through uv and capture stdout/stderr."""
+    command = ["uv", "run", script, *args]
+    return subprocess.run(
+        command,
+        input=stdin,
+        text=True,
+        capture_output=True,
+        cwd=REPO_ROOT,
+        check=False,
+    )
 
-    def test_cli_json_mode_success(self, tmp_path, monkeypatch):
-        """Test successful JSON mode execution."""
-        template = tmp_path / "test.md"
-        template.write_text("---\ndescription: Test\n---\n\nHello, {{ name }}!")
 
-        request = {
-            "template_path": str(template),
-            "output_mode": "body",
-            "variables": {"string_vars": {"name": "Alice"}},
-        }
+def test_cli_help_lists_contract_commands() -> None:
+    result = run_cli("--help")
 
-        # Mock sys.argv for CLI
-        monkeypatch.setattr(sys, "argv", ["template-parsing-engine"])
+    assert result.returncode == 0
+    assert "render" in result.stdout
+    assert "inspect" in result.stdout
+    assert "validate" in result.stdout
 
-        class MockStdin:
-            def read(self):
-                return json.dumps(request)
 
-        monkeypatch.setattr(sys, "stdin", MockStdin())
+def test_render_command_reads_json_from_stdin(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    diff_file = tmp_path / "diff.txt"
+    template.write_text("---\ndescription: Review prompt\n---\n\n{{ ticket.title }}\n{{ diff }}")
+    diff_file.write_text("line one")
 
-        # Capture stdout
-        outputs = []
+    request = {
+        "template": {"path": str(template)},
+        "bindings": {
+            "data": {"ticket": {"title": "Broken import"}},
+            "text_files": [{"name": "diff", "path": str(diff_file)}],
+        },
+    }
 
-        class MockStdout:
-            def write(self, data):
-                outputs.append(data)
+    result = run_cli("render", stdin=json.dumps(request))
 
-        monkeypatch.setattr(sys, "stdout", MockStdout())
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["template"]["frontmatter"] == {"description": "Review prompt"}
+    assert payload["rendered"]["body"] == "Broken import\nline one"
 
-        result = main()
-        assert result == 0
 
-        output = json.loads("".join(outputs))
-        assert output["ok"] is True
-        assert "Hello, Alice!" in output["result"]["content"]
+def test_inspect_command_supports_file_input_and_output(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    template.write_text("---\ndescription: Review prompt\n---\n\n{{ ticket.title }}")
+    input_file = tmp_path / "request.json"
+    output_file = tmp_path / "response.json"
+    input_file.write_text(json.dumps({"template": {"path": str(template)}}))
 
-    def test_cli_json_mode_missing_template(self, tmp_path, monkeypatch):
-        """Test JSON mode with missing template."""
-        request = {
-            "template_path": "/nonexistent/template.md",
-            "output_mode": "body",
-        }
+    result = run_cli("inspect", "--input", str(input_file), "--output", str(output_file))
 
-        monkeypatch.setattr(sys, "argv", ["template-parsing-engine"])
+    assert result.returncode == 0
+    payload = json.loads(output_file.read_text())
+    assert payload["template"]["body_template"] == "{{ ticket.title }}"
+    assert payload["template"]["path"] == str(template.resolve())
 
-        class MockStdin:
-            def read(self):
-                return json.dumps(request)
 
-        monkeypatch.setattr(sys, "stdin", MockStdin())
+def test_validate_command_reports_missing_bindings(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    template.write_text("{{ ticket.title }}\n{{ diff }}")
 
-        outputs = []
+    request = {
+        "template": {"path": str(template)},
+        "bindings": {"data": {"ticket": {"title": "Broken import"}}},
+    }
 
-        class MockStdout:
-            def write(self, data):
-                outputs.append(data)
+    result = run_cli("validate", stdin=json.dumps(request))
 
-        monkeypatch.setattr(sys, "stdout", MockStdout())
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["valid"] is False
+    assert payload["missing_bindings"] == ["diff"]
 
-        result = main()
-        assert result == 1
 
-        output = json.loads("".join(outputs))
-        assert output["ok"] is False
-        assert "FileNotFoundError" in output["error_type"]
+def test_standalone_render_script_matches_main_command(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    template.write_text("Hello {{ name }}")
 
-    def test_cli_json_mode_invalid_json(self, monkeypatch):
-        """Test JSON mode with invalid input."""
+    request = {
+        "template": {"path": str(template)},
+        "bindings": {"data": {"name": "Alice"}},
+    }
 
-        monkeypatch.setattr(sys, "argv", ["template-parsing-engine"])
+    result = run_cli(stdin=json.dumps(request), script="llm-template-render")
 
-        class MockStdin:
-            def read(self):
-                return "not valid json"
-
-        monkeypatch.setattr(sys, "stdin", MockStdin())
-
-        outputs = []
-
-        class MockStdout:
-            def write(self, data):
-                outputs.append(data)
-
-        monkeypatch.setattr(sys, "stdout", MockStdout())
-
-        result = main()
-        assert result == 1
-
-        output = json.loads("".join(outputs))
-        assert output["ok"] is False
-
-
-class TestCLIDirectMode:
-    """Tests for CLI direct rendering mode."""
-
-    def test_cli_direct_mode_success(self, tmp_path, monkeypatch):
-        """Test successful direct mode execution."""
-        template = tmp_path / "test.md"
-        template.write_text("---\ndescription: Test\n---\n\nHello, {{ name }}!")
-
-        # Mock sys.argv
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "template-parsing-engine",
-                "--template",
-                str(template),
-                "--var-string",
-                "name=Alice",
-                "--output-mode",
-                "body",
-            ],
-        )
-
-        outputs = []
-
-        class MockStdout:
-            def write(self, data):
-                outputs.append(data)
-
-        monkeypatch.setattr(sys, "stdout", MockStdout())
-
-        result = main()
-        assert result == 0
-
-        output = json.loads("".join(outputs))
-        assert output["ok"] is True
-        assert "Hello, Alice!" in output["result"]["content"]
-
-    def test_cli_direct_mode_file_variable(self, tmp_path, monkeypatch):
-        """Test direct mode with file variable."""
-        template = tmp_path / "test.md"
-        template.write_text("---\n---\n\nContent: {{ content }}")
-
-        content_file = tmp_path / "content.txt"
-        content_file.write_text("File content")
-
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "template-parsing-engine",
-                "--template",
-                str(template),
-                "--var-file",
-                f"content={content_file}",
-                "--output-mode",
-                "body",
-            ],
-        )
-
-        outputs = []
-
-        class MockStdout:
-            def write(self, data):
-                outputs.append(data)
-
-        monkeypatch.setattr(sys, "stdout", MockStdout())
-
-        result = main()
-        assert result == 0
-
-        output = json.loads("".join(outputs))
-        assert output["ok"] is True
-        assert "File content" in output["result"]["content"]
-
-
-class TestCLIFileIO:
-    """Tests for CLI file-based I/O."""
-
-    def test_cli_file_input_output(self, tmp_path, monkeypatch):
-        """Test file-based input and output."""
-        template = tmp_path / "test.md"
-        template.write_text("---\ndescription: Test\n---\n\nHello, {{ name }}!")
-
-        input_file = tmp_path / "request.json"
-        input_file.write_text(
-            json.dumps(
-                {
-                    "template_path": str(template),
-                    "output_mode": "body",
-                    "variables": {"string_vars": {"name": "Alice"}},
-                }
-            )
-        )
-
-        output_file = tmp_path / "result.json"
-
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "template-parsing-engine",
-                "--input",
-                str(input_file),
-                "--output",
-                str(output_file),
-            ],
-        )
-
-        result = main()
-        assert result == 0
-
-        output = json.loads(output_file.read_text())
-        assert output["ok"] is True
-        assert "Hello, Alice!" in output["result"]["content"]
-
-
-class TestCLIErrorHandling:
-    """Tests for CLI error handling."""
-
-    def test_cli_missing_variables(self, tmp_path, monkeypatch):
-        """Test CLI with missing required variables."""
-        template = tmp_path / "test.md"
-        template.write_text(
-            "---\ninputs:\n  - name: required\n    required: true\n---\n\n{{ required }}"
-        )
-
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "template-parsing-engine",
-                "--template",
-                str(template),
-                "--output-mode",
-                "body",
-            ],
-        )
-
-        outputs = []
-
-        class MockStdout:
-            def write(self, data):
-                outputs.append(data)
-
-        monkeypatch.setattr(sys, "stdout", MockStdout())
-
-        result = main()
-        assert result == 1
-
-        output = json.loads("".join(outputs))
-        assert output["ok"] is False
-        assert output["error_type"] == "MissingVariablesError"
-
-    def test_cli_template_format_error(self, tmp_path, monkeypatch):
-        """Test CLI with invalid template format."""
-        template = tmp_path / "test.md"
-        template.write_text("---\ninvalid: [yaml\n---\nbody")
-
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "template-parsing-engine",
-                "--template",
-                str(template),
-                "--output-mode",
-                "body",
-            ],
-        )
-
-        outputs = []
-
-        class MockStdout:
-            def write(self, data):
-                outputs.append(data)
-
-        monkeypatch.setattr(sys, "stdout", MockStdout())
-
-        result = main()
-        assert result == 1
-
-        output = json.loads("".join(outputs))
-        assert output["ok"] is False
-        assert output["error_type"] == "TemplateFormatError"
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["rendered"]["body"] == "Hello Alice"

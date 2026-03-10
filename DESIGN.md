@@ -1,368 +1,325 @@
-# Template Parsing Engine - Design Document
+# llm-templating-engine Design
 
-## Overview
+## Purpose
 
-Extract the templating engine from `~/ai/scripts/llm/templates.py` into a standalone uv package that provides:
+`llm-templating-engine` is a general template library and renderer for prompt-oriented
+documents and snippets.
 
-- Python module + CLI for template rendering
-- JSON I/O contract for TypeScript/Node.js integration
-- Support for Jinja2 templating with YAML frontmatter
-- File-based and string-based variable substitution
-- Flexible output modes (full markdown or body-only)
+It owns:
 
-## Extraction Scope
+- template loading
+- frontmatter parsing
+- snippet/include resolution
+- variable materialization
+- Jinja rendering
+- JSON-first CLI and Python interfaces
 
-### Source (from ~/ai/scripts/llm/)
+It does not own:
 
-1. **templates.py** - Core extraction target:
-   - `MicroAgent` dataclass
-   - `load_micro_agent()` - parses YAML frontmatter + body
-   - `render_body()` - Jinja2 rendering with environment
-   - `_split_frontmatter()` - handles both `---\n` and legacy formats
-   - `PromptTemplateLoader` - custom Jinja2 loader
-   - `PromptTemplateEnvironment` - Jinja2 environment with path resolution
-   - `MissingVariablesError`, `TemplateFormatError` - exceptions
-   - `default_prompts_dir()`, `resolve_prompt_path()` - path resolution
+- model providers
+- API keys
+- model invocation
+- output validation for LLM responses
+- runner-specific metadata semantics
 
-2. **schemas.py** - Optional inclusion:
-   - `SCHEMAS` registry for output validation
-   - `resolve_schema()` for schema lookup
-   - `make_schema_from_dict()` for inline schema definitions
-   - Can be kept separate or integrated as optional feature
+The engine treats frontmatter as data. It does not interpret fields like `model`,
+`temperature`, `output_schema`, or `response_template`. Other tools may interpret those
+fields, but this package only preserves and returns them.
 
-3. **bridge.py** - Reference for I/O contract:
-   - JSON request/response format
-   - Action dispatch pattern
-   - Error handling approach
+## Design Goals
 
-## Package Structure
+- Support a reusable library of prompt documents, snippets, and macros.
+- Make structured data the default variable model, not a string-only workaround.
+- Support file-backed variables for large text inputs without leaking file I/O into
+  consumers.
+- Expose simple JSON stdin/stdout contracts for JS/TS interop.
+- Keep the Python API and CLI aligned with the same request and response models.
+- Keep template semantics independent from any LLM runner semantics.
 
-```
-template-parsing-engine/
-├── src/
-│   └── template_parsing_engine/
-│       ├── __init__.py          # Public API
-│       ├── core.py              # Core templating logic (extracted from templates.py)
-│       ├── cli.py               # CLI entry point with JSON I/O
-│       └── types.py             # TypeScript-compatible type definitions
-├── tests/
-│   ├── test_core.py             # Core functionality tests
-│   ├── test_cli.py              # CLI integration tests
-│   └── fixtures/                # Test templates
-│       ├── basic.md
-│       ├── with_includes.md
-│       └── with_variables.md
-├── template_parsing_engine.pyi  # TypeScript type stubs (for Python consumers)
-├── pyproject.toml               # uv package config
-├── README.md                    # Usage documentation
-└── DESIGN.md                    # This file
-```
+## Core Concepts
 
-## Input/Output Contract
+### Template Document
 
-### Input Schema (JSON)
+A template document is a text file with:
+
+- optional YAML frontmatter
+- a template body
+- optional Jinja includes or imports
+
+The engine should support both full prompt documents and smaller reusable snippets.
+
+### Template Reference
+
+A template may be referenced by:
+
+- filesystem path
+- inline text plus a logical name
+
+Inline text support matters for programmatic consumers and tests. Path-based references
+matter for prompt libraries.
+
+### Bindings
+
+Bindings are the values exposed to Jinja.
+
+Bindings should have two sources:
+
+- `data`: arbitrary JSON-serializable values available directly inside templates
+- `text_files`: files that are read as text and exposed as string values
+
+This is the canonical split. The engine should not force everything through
+`string_vars`. Structured data should stay structured.
+
+### Search Roots
+
+Search roots define where includes and imports are resolved. They should include:
+
+- the current template directory
+- explicit search paths from the request
+- an optional library root from environment or configuration
+
+## Canonical JSON Contracts
+
+The CLI should be command-based, but every command should accept and emit JSON.
+No ad hoc action multiplexer envelope.
+
+### `render`
+
+Input:
 
 ```json
 {
-  "template_path": "/path/to/template.md",
-  "output_mode": "full" | "body",  // default: "full"
-  "variables": {
-    "string_vars": {
-      "var_name": "value"
+  "template": {
+    "path": "prompts/review.md"
+  },
+  "bindings": {
+    "data": {
+      "ticket": {
+        "id": 42,
+        "title": "broken import"
+      },
+      "tier": "B"
     },
-    "file_vars": [
-      {"name": "file_content", "path": "/path/to/file.txt"}
+    "text_files": [
+      {
+        "name": "diff",
+        "path": "artifacts/current.diff"
+      }
     ]
   },
-  "search_paths": ["/optional/custom/search/path"]
-}
-```
-
-### Output Schema (JSON)
-
-**Success:**
-
-```json
-{
-  "ok": true,
-  "result": {
-    "content": "rendered markdown content",
-    "frontmatter": {
-      "description": "...",
-      "mode": "primary"
-      // ... other frontmatter keys
-    }
+  "options": {
+    "search_paths": ["prompts", "prompts/snippets"],
+    "render_mode": "body",
+    "strict_undefined": true
   }
 }
 ```
 
-**Error:**
+Output:
 
 ```json
 {
-  "ok": false,
-  "error": "error message",
-  "error_type": "MissingVariablesError" | "TemplateFormatError" | "TemplateNotFound" | "FileNotFoundError"
+  "template": {
+    "path": "/abs/path/prompts/review.md",
+    "frontmatter": {
+      "description": "Code review prompt"
+    },
+    "body_template": "Review {{ ticket.title }}"
+  },
+  "rendered": {
+    "body": "Review broken import",
+    "document": "---\ndescription: Code review prompt\n---\n\nReview broken import"
+  }
 }
 ```
 
-### CLI Interface
+Notes:
 
-```bash
-# Read from stdin, write to stdout
-echo '{"template_path": "/path/to/template.md", ...}' | uv run template-parsing-engine
+- `render_mode` controls which field callers actually care about, but the response can
+  still return both rendered forms for convenience.
+- `body_template` is useful for inspection and debugging.
 
-# File-based input/output
-uv run template-parsing-engine --input request.json --output result.json
+### `inspect`
 
-# Direct template rendering with inline variables
-uv run template-parsing-engine \
-  --template /path/to/template.md \
-  --var-string name="value" \
-  --var-file content=/path/to/content.txt \
-  --output-mode body
+Input:
+
+```json
+{
+  "template": {
+    "path": "prompts/review.md"
+  },
+  "options": {
+    "search_paths": ["prompts", "prompts/snippets"]
+  }
+}
 ```
+
+Output:
+
+```json
+{
+  "template": {
+    "path": "/abs/path/prompts/review.md",
+    "frontmatter": {
+      "description": "Code review prompt"
+    },
+    "body_template": "Review {{ ticket.title }}"
+  }
+}
+```
+
+This command should not render. It should only parse and load.
+
+### `validate`
+
+Input:
+
+```json
+{
+  "template": {
+    "path": "prompts/review.md"
+  },
+  "bindings": {
+    "data": {
+      "ticket": {
+        "title": "broken import"
+      }
+    }
+  },
+  "options": {
+    "search_paths": ["prompts"]
+  }
+}
+```
+
+Output:
+
+```json
+{
+  "valid": true,
+  "missing_bindings": []
+}
+```
+
+`validate` exists to support prompt authoring and CI. It should answer whether the
+template can render under the provided bindings without forcing consumers to do a full
+render step themselves.
+
+## CLI Shape
+
+Primary CLI:
+
+- `llm-templating-engine render`
+- `llm-templating-engine inspect`
+- `llm-templating-engine validate`
+
+Standalone scripts:
+
+- `llm-template-render`
+- `llm-template-inspect`
+- `llm-template-validate`
+
+Each command should:
+
+- default to stdin for input JSON
+- default to stdout for output JSON
+- optionally support `--input` and `--output` file paths
+
+The CLI should remain thin. Real behavior belongs in library functions and request/response
+models.
+
+## Python API Shape
+
+The package should expose a small public surface:
+
+- load a template document
+- inspect a template document
+- materialize bindings
+- render a template document
+- validate a template document against bindings
+
+Suggested module layout:
+
+```text
+src/llm_templating_engine/
+  __init__.py
+  contracts.py
+  bindings.py
+  documents.py
+  loader.py
+  renderer.py
+  validation.py
+  cli.py
+  cli_render.py
+  cli_inspect.py
+  cli_validate.py
+```
+
+This keeps the package shallow while separating concerns cleanly.
+
+## Reserved Semantics
+
+The templating engine should reserve as little meaning as possible.
+
+Allowed engine-owned semantics:
+
+- frontmatter parsing rules
+- include/import resolution rules
+- binding materialization rules
+- render mode selection
+
+Not engine-owned:
+
+- `model`
+- `models`
+- `temperature`
+- `max_tokens`
+- `retries`
+- `output_schema`
+- `system_template`
+- `response_template`
+
+Those are runner concerns and should stay outside this package's interpretation logic.
 
 ## Key Design Decisions
 
-### 1. Variable Substitution
+### Structured Data Is Canonical
 
-**File Variables (`file_vars`):**
+Templates should receive arbitrary JSON-like structures, not only strings.
 
-- Read entire file as string content
-- Variable name maps to file content in template
-- Supports relative paths resolved against template directory
-- Example: `{"name": "readme", "path": "./README.md"}` → `{{ readme }}` in template
+That allows:
 
-**String Variables (`string_vars`):**
+- lists and dicts in loops
+- conditional logic on nested data
+- richer response templating later in `llm-runner`
 
-- Direct key-value mapping
-- Example: `{"name": "Alice"}` → `{{ name }}` in template
+### File Inputs Materialize to Text
 
-**Combined Resolution:**
+File bindings should be an explicit convenience layer. Their job is to read files and
+inject text under a named variable. They should not mutate the rest of the binding model.
 
-- File vars loaded first, then string vars (string vars can override)
-- Both available in Jinja2 rendering context
+### Frontmatter Is Preserved, Not Interpreted
 
-### 2. Frontmatter Handling
+The engine should preserve all frontmatter exactly as parsed. Consumers may read runner
+metadata from it later, but the engine should not understand runner policy.
 
-**Input Templates Support:**
+### JSON Is the Interop Boundary
 
-- Standard YAML frontmatter: `---\nkey: value\n---\n`
-- Legacy format: `key: value\n---\n`
-- Access via `{{ frontmatter.key }}` in templates
+JS/TS callers should not need handwritten bridge logic beyond spawning a Python command
+and passing JSON.
 
-**Output Modes:**
+### No Runner Logic in This Repo
 
-- `"full"`: Returns rendered content with reconstructed YAML frontmatter
-- `"body"`: Returns only the rendered body (after frontmatter separator)
+The engine may be used by `llm-runner`, but it should not evolve around `llm-runner`.
+That dependency direction matters.
 
-### 3. Include/Import Resolution
+## Open Extension Points
 
-**Jinja2 Support:**
+These are valid future additions if needed, but they are not required for the initial
+boundary:
 
-- `{% include "./relative/path.md" %}`
-- `{% import "./macros.md" as macros %}`
-- Relative paths resolved against template's parent directory
-- Absolute paths resolved against `search_paths`
-
-**Search Path Priority:**
-
-1. Template's parent directory (highest)
-2. `search_paths` from input (in order)
-3. `PROMPTS_DIR` environment variable (lowest, if set)
-
-### 4. Error Handling
-
-**Exception Types:**
-
-- `MissingVariablesError`: Required template variables not provided
-- `TemplateFormatError`: Invalid YAML frontmatter or structure
-- `TemplateNotFoundError`: Included/imported template not found
-- `FileNotFoundError`: File variable path doesn't exist
-
-**CLI Behavior:**
-
-- All errors return JSON with `ok: false`
-- Non-zero exit code on error
-- stderr for logging (optional `--verbose` flag)
-
-### 5. TypeScript Integration
-
-**JSON Bridge:**
-
-- TypeScript can spawn Python subprocess
-- Send JSON request via stdin
-- Receive JSON response via stdout
-
-**Type Definitions (template_parsing_engine.d.ts):**
-
-```typescript
-export interface RenderRequest {
-  template_path: string;
-  output_mode?: "full" | "body";
-  variables?: {
-    string_vars?: Record<string, string>;
-    file_vars?: Array<{ name: string; path: string }>;
-  };
-  search_paths?: string[];
-}
-
-export interface RenderResponse {
-  ok: boolean;
-  result?: {
-    content: string;
-    frontmatter: Record<string, any>;
-  };
-  error?: string;
-  error_type?: string;
-}
-```
-
-## Implementation Phases
-
-### Phase 1: Core Extraction
-
-1. Copy templating logic from `templates.py`
-2. Create `src/template_parsing_engine/core.py`
-3. Maintain backward-compatible API
-4. Add comprehensive tests
-
-### Phase 2: CLI Development
-
-1. Create `src/template_parsing_engine/cli.py`
-2. Implement JSON I/O handling
-3. Add argument parsing for direct use
-4. Test CLI with various input modes
-
-### Phase 3: Type Definitions
-
-1. Create TypeScript type definitions
-2. Add usage examples in README
-3. Document JSON bridge pattern
-
-### Phase 4: Integration
-
-1. Update `~/ai/scripts/llm` to use new package
-2. Add package as dependency
-3. Test existing workflows still work
-4. Document migration path
-
-## Usage Examples
-
-### Python Module
-
-```python
-from template_parsing_engine import render_template
-
-result = render_template(
-    template_path="/path/to/template.md",
-    variables={
-        "string_vars": {"name": "Alice"},
-        "file_vars": [{"name": "content", "path": "/path/to/content.txt"}]
-    },
-    output_mode="full"
-)
-print(result.content)
-print(result.frontmatter)
-```
-
-### CLI (JSON Mode)
-
-```bash
-# Prepare request
-cat > request.json << 'EOF'
-{
-  "template_path": "/home/user/prompts/agent.md",
-  "output_mode": "body",
-  "variables": {
-    "string_vars": {"model": "gpt-4"},
-    "file_vars": [{"name": "context", "path": "./context.txt"}]
-  }
-}
-EOF
-
-# Execute
-uv run template-parsing-engine < request.json > result.json
-
-# Check result
-cat result.json | jq '.result.content'
-```
-
-### TypeScript/Node.js
-
-```typescript
-import { spawn } from "child_process";
-
-async function renderTemplate(request: RenderRequest): Promise<RenderResponse> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("uv", ["run", "template-parsing-engine"]);
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdout.on("data", (data) => (stdout += data));
-    proc.stderr.on("data", (data) => (stderr += data));
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(stderr || `Process exited with code ${code}`));
-      } else {
-        resolve(JSON.parse(stdout));
-      }
-    });
-
-    proc.stdin.write(JSON.stringify(request));
-    proc.stdin.end();
-  });
-}
-```
-
-## Dependencies
-
-**Core:**
-
-- `jinja2` - Template engine
-- `pyyaml` - YAML frontmatter parsing
-- `pydantic` - Input validation (optional but recommended)
-
-**Development:**
-
-- `pytest` - Testing
-- `mypy` - Type checking
-
-## Environment Variables
-
-- `PROMPTS_DIR` - Default directory for template resolution (optional)
-- `TEMPLATE_SEARCH_PATHS` - Colon-separated default search paths (optional)
-
-## Migration Notes
-
-### From ~/ai/scripts/llm
-
-**Old code:**
-
-```python
-from scripts.llm.templates import load_micro_agent, render_body
-
-agent = load_micro_agent("path/to/template.md")
-rendered = agent.render(**variables)
-```
-
-**New code:**
-
-```python
-from template_parsing_engine import render_template
-
-result = render_template(
-    template_path="path/to/template.md",
-    variables={"string_vars": variables},
-    output_mode="body"
-)
-rendered = result.content
-```
-
-## Testing Strategy
-
-1. **Unit tests** for core functions
-2. **Integration tests** for CLI
-3. **Cross-language tests** verify Python output matches TypeScript expectations
-4. **Migration tests** ensure backward compatibility
+- library indexing or catalog search
+- template dependency graphs
+- frontmatter rendering
+- alternate template engines behind the same contracts
+- JSON file bindings in addition to text file bindings

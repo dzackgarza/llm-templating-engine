@@ -1,193 +1,51 @@
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
+# LLM Templating Engine
 
-# Template Parsing Engine
+Generic Jinja-based template loading and rendering for prompt documents, snippets, and
+macros.
 
-Parse Jinja2 and YAML markdown templates with this standalone engine. It supports frontmatter and complex template structures.
-
-## Features
-
-- **YAML Frontmatter Parsing**: Extract metadata from markdown templates efficiently.
-- **Jinja2 Templating**: Include files, import modules, and substitute variables with full Jinja2 support.
-- **File Variables**: Read file contents directly into template variables.
-- **JSON I/O**: Integrate easily with TypeScript or JavaScript via a JSON API.
-- **CLI and Module**: Use the engine as a command-line tool or a Python module.
-
-## Installation
-
-### Via uv (recommended)
-
-Install and run directly with `uvx`:
+## Setup
 
 ```bash
-uvx --from git+https://github.com/dzackgarza/template-parsing-engine template-parsing-engine
+direnv allow
+just setup
 ```
 
-### As a dependency
-
-Add the engine to your `pyproject.toml`:
-
-```toml
-# pyproject.toml
-dependencies = [
-    "template-parsing-engine @ git+https://github.com/dzackgarza/template-parsing-engine"
-]
-```
-
-## Usage
-
-### CLI
-
-**JSON Mode** (reads from stdin, writes to stdout):
+Local configuration lives in `.envrc`:
 
 ```bash
-echo '{
-  "template_path": "/path/to/template.md",
-  "output_mode": "body",
-  "variables": {
-    "string_vars": {"name": "Alice"},
-    "file_vars": [{"name": "content", "path": "/path/to/content.txt"}]
-  }
-}' | uv run template-parsing-engine
+export PROMPTS_DIR="${PROMPTS_DIR:-$PWD/prompts}"
 ```
 
-**File-based I/O**:
+## Direct Use
 
 ```bash
-uv run template-parsing-engine --input request.json --output result.json
+uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
+  llm-template-render --help
+
+uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
+  llm-template-inspect --help
+
+uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
+  llm-template-validate --help
 ```
 
-**Direct Rendering**:
+## Commands
 
-```bash
-uv run template-parsing-engine \
-  --template /path/to/template.md \
-  --var-string name="Alice" \
-  --var-file content=/path/to/content.txt \
-  --output-mode body
-```
+- `llm-template-render` renders one JSON request from stdin.
+- `llm-template-inspect` parses and returns template structure without rendering.
+- `llm-template-validate` reports whether the provided bindings can render a template.
 
-### Python Module
+TypeScript and JavaScript callers can use the JSON request and response shapes in
+`types.d.ts`.
 
-Use the `render_template` function in your Python code:
+## Development
 
-```python
-from template_parsing_engine import render_template
+- `just setup` installs the project and dev dependencies.
+- `just check` runs typecheck, lint, and tests.
+- `just build` builds a publication-ready wheel and sdist.
+- `just bump` increments the minor version with `uv version --bump minor`.
 
-result = render_template(
-    template_path="/path/to/template.md",
-    variables={
-        "string_vars": {"name": "Alice"},
-        "file_vars": [{"name": "content", "path": "/path/to/content.txt"}]
-    },
-    output_mode="full"  # or "body"
-)
-
-print(result.content)
-print(result.frontmatter)
-```
-
-### TypeScript/Node.js
-
-Spawn a process to render templates from Node.js:
-
-```typescript
-import { spawn } from "child_process";
-
-async function renderTemplate(request: RenderRequest): Promise<RenderResponse> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("uv", ["run", "template-parsing-engine"]);
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdout.on("data", (data) => (stdout += data));
-    proc.stderr.on("data", (data) => (stderr += data));
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(stderr || `Process exited with code ${code}`));
-      } else {
-        resolve(JSON.parse(stdout));
-      }
-    });
-
-    proc.stdin.write(JSON.stringify(request));
-    proc.stdin.end();
-  });
-}
-
-// Usage
-const result = await renderTemplate({
-  template_path: "/path/to/template.md",
-  output_mode: "body",
-  variables: {
-    string_vars: { name: "Alice" },
-  },
-});
-```
-
-## Template Format
-
-Templates use markdown with optional YAML frontmatter:
-
-```markdown
----
-description: My agent template
-mode: primary
----
-
-# {{ title }}
-
-Content here can use {{ variables }} and Jinja2 includes:
-
-{% include "./partial.md" %}
-```
-
-## API Reference
-
-### Input Schema
-
-Configure the engine with this JSON structure:
-
-```json
-{
-  "template_path": "/path/to/template.md",
-  "output_mode": "full" | "body",
-  "variables": {
-    "string_vars": {"key": "value"},
-    "file_vars": [{"name": "var_name", "path": "/path/to/file"}]
-  },
-  "search_paths": ["/optional/custom/search/path"]
-}
-```
-
-### Output Schema
-
-The engine returns results in these formats:
-
-**Success:**
-
-```json
-{
-  "ok": true,
-  "result": {
-    "content": "rendered content",
-    "frontmatter": { "description": "...", "mode": "primary" }
-  }
-}
-```
-
-**Error:**
-
-```json
-{
-  "ok": false,
-  "error": "error message",
-  "error_type": "MissingVariablesError"
-}
-```
-
-## Environment Variables
-
-- `PROMPTS_DIR`: Set the default directory for template resolution (default: `/home/dzack/ai/prompts`).
+Full interface and contract details live in `DESIGN.md`.
 
 ## License
 
