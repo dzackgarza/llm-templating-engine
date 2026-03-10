@@ -78,24 +78,33 @@ def _split_frontmatter(content: str) -> tuple[dict, str]:
     1. Standard markdown: ---\nkey: value\n---\nbody
     2. Legacy format: key: value\n---\nbody
     """
-    if content.startswith("---\n"):
-        end_marker = "\n---\n"
-        end_idx = content.find(end_marker, 4)
-        if end_idx == -1:
-            raise TemplateFormatError("Opening markdown frontmatter marker missing closing '---'")
-        frontmatter_text = content[4:end_idx]
-        body = content[end_idx + len(end_marker) :].lstrip("\n")
-        return _parse_yaml_block(frontmatter_text), body
+    if not content.startswith("---"):
+        # Could be legacy format or no frontmatter
+        lines = content.split("\n")
+        sep_idx = next((i for i, line in enumerate(lines) if line == "---"), None)
+        if sep_idx is None:
+            return {}, content
+        
+        frontmatter_text = "\n".join(lines[:sep_idx])
+        body = "\n".join(lines[sep_idx + 1 :]).lstrip("\n")
+        metadata = _parse_yaml_block(frontmatter_text)
+        return metadata, body
 
+    # Standard format: starts with ---
     lines = content.split("\n")
-    sep_idx = next((i for i, line in enumerate(lines) if line == "---"), None)
+    # First line is ---, look for the NEXT --- on its own line
+    sep_idx = next((i for i, line in enumerate(lines[1:]) if line == "---"), None)
     if sep_idx is None:
-        return {}, content
-
-    frontmatter_text = "\n".join(lines[:sep_idx])
-    body = "\n".join(lines[sep_idx + 1 :]).lstrip("\n")
-    metadata = _parse_yaml_block(frontmatter_text)
-    return metadata, body
+        # If it starts with --- but has no second ---, it's malformed standard or no frontmatter
+        # For compatibility with legacy format that *might* start with key: value where key is ---
+        # (unlikely but possible), let's see if there's any other ---.
+        # But standard says it must have a closing marker.
+        raise TemplateFormatError("Opening markdown frontmatter marker missing closing '---'")
+    
+    actual_sep_idx = sep_idx + 1
+    frontmatter_text = "\n".join(lines[1:actual_sep_idx])
+    body = "\n".join(lines[actual_sep_idx + 1 :]).lstrip("\n")
+    return _parse_yaml_block(frontmatter_text), body
 
 
 def _dedupe_paths(paths: list[Path]) -> list[Path]:
