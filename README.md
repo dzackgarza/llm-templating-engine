@@ -10,9 +10,11 @@ direnv allow
 just setup
 ```
 
-Local configuration lives in `.envrc`:
+Local configuration lives in `.envrc` and inherits shared shell configuration from
+`~/.envrc`:
 
 ```bash
+source_up
 export PROMPTS_DIR="${PROMPTS_DIR:-$PWD/prompts}"
 ```
 
