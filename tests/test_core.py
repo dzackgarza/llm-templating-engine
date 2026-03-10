@@ -90,6 +90,24 @@ def test_render_template_supports_inline_text_with_logical_name(tmp_path: Path) 
     assert response.rendered.body == "Hello Alice there"
 
 
+def test_render_template_supports_path_templates_without_frontmatter(tmp_path: Path) -> None:
+    template = tmp_path / "response_template.md"
+    template.write_text(
+        "{% if probe_prompt %}Probe {{ probe_prompt }}{% else %}Tier {{ tier }}{% endif %}"
+    )
+
+    response = render_template(
+        RenderTemplateRequest(
+            template=TemplateReference(path=str(template)),
+            bindings=Bindings(data={"tier": "model-self", "probe_prompt": ""}),
+        )
+    )
+
+    assert response.template.frontmatter == {}
+    assert response.rendered.body == "Tier model-self"
+    assert response.rendered.document == "Tier model-self"
+
+
 def test_validate_template_reports_missing_bindings(tmp_path: Path) -> None:
     template = tmp_path / "review.md"
     template.write_text("{{ ticket.title }}\n{{ diff }}\n{{ extra }}")

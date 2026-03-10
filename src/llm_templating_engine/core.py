@@ -74,13 +74,7 @@ def _parse_yaml_block(frontmatter_text: str) -> dict[str, Any]:
 def _split_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     """Split YAML frontmatter from a template body."""
     if not content.startswith("---"):
-        lines = content.split("\n")
-        sep_idx = next((index for index, line in enumerate(lines) if line == "---"), None)
-        if sep_idx is None:
-            return {}, content
-        frontmatter_text = "\n".join(lines[:sep_idx])
-        body = "\n".join(lines[sep_idx + 1 :]).lstrip("\n")
-        return _parse_yaml_block(frontmatter_text), body
+        return {}, content
 
     lines = content.split("\n")
     sep_idx = next((index for index, line in enumerate(lines[1:]) if line == "---"), None)
