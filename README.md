@@ -5,6 +5,13 @@
 Generic Jinja-based template loading and rendering for prompt documents, snippets, and
 macros.
 
+## Features
+
+- `llm-template-render` — renders one JSON request from stdin using a Jinja template
+- `llm-template-inspect` — parses and returns template structure without rendering
+- `llm-template-validate` — validates that provided bindings can render a template
+- TypeScript-compatible type definitions in `types.d.ts` for JSON request/response shapes
+
 ## Setup
 
 ```bash
