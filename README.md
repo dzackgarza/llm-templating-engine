@@ -1,3 +1,5 @@
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I57UKJ8)
+
 # LLM Templating Engine
 
 Generic Jinja-based template loading and rendering for prompt documents, snippets, and
