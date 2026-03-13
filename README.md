@@ -9,7 +9,7 @@ macros.
 
 ```bash
 direnv allow
-just setup
+just install
 ```
 
 Local configuration lives in `.envrc` and inherits shared shell configuration from
@@ -44,7 +44,7 @@ TypeScript and JavaScript callers can use the JSON request and response shapes i
 
 ## Development
 
-- `just setup` installs the project and dev dependencies.
+- `just install` installs the project and dev dependencies.
 - `just check` runs typecheck, lint, and tests.
 - `just build` builds a publication-ready wheel and sdist.
 - `just bump` increments the minor version with `uv version --bump minor`.
