@@ -37,7 +37,6 @@ llm-templating-engine = "llm_templating_engine.cli:main"
 llm-template-render = "llm_templating_engine.cli:render_main"
 llm-template-inspect = "llm_templating_engine.cli:inspect_main"
 llm-template-validate = "llm_templating_engine.cli:validate_main"
-llm-template-list = "llm_templating_engine.cli:list_main"
 
 [project.urls]
 Homepage = "https://github.com/dzackgarza/llm-templating-engine"
