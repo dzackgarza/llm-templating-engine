@@ -115,9 +115,14 @@ Check if bindings satisfy all template variables before rendering.
 { "valid": false, "missing_bindings": ["ticket.id", "tier", "diff"] }
 ```
 
-### `llm-template-list`
+### `llm-templating-engine list`
 
 Scan `$PROMPTS_DIR` and return an inventory of all available templates. No input required.
+
+```bash
+uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
+  llm-templating-engine list
+```
 
 **Output:**
 
@@ -153,7 +158,8 @@ echo '{"template":{"path":"prompts/review.md"},"bindings":{"data":{"ticket":{"id
   | uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git llm-template-validate
 
 # List inventory
-uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git llm-template-list
+uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
+  llm-templating-engine list
 ```
 
 For files instead of stdin, use `--input` and `--output`:
