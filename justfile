@@ -1,3 +1,4 @@
+set fallback := true
 default:
     @just --list
 

@@ -2,62 +2,171 @@
 
 # LLM Templating Engine
 
-Generic Jinja-based template loading and rendering for prompt documents, snippets, and
-macros.
+Jinja-based template renderer for prompt documents. Pass JSON, get rendered text. No installation required.
 
-## Features
+## Template Format
 
-- `llm-template-render` — renders one JSON request from stdin using a Jinja template
-- `llm-template-inspect` — parses and returns template structure without rendering
-- `llm-template-validate` — validates that provided bindings can render a template
-- TypeScript-compatible type definitions in `types.d.ts` for JSON request/response shapes
+Templates are Markdown files with optional YAML frontmatter:
 
-## Setup
+```markdown
+---
+description: Code review prompt
+model: gpt-4o
+---
 
-```bash
-direnv allow
-just install
+Review the following ticket:
+
+**Ticket:** {{ ticket.title }}
+**ID:** #{{ ticket.id }}
+
+{% if diff %}
+\`\`\`diff
+{{ diff }}
+\`\`\`
+{% endif %}
+
+Tier: {{ tier }}
 ```
 
-Local configuration lives in `.envrc` and inherits shared shell configuration from
-`~/.envrc`:
-
-```bash
-source_up
-export PROMPTS_DIR="${PROMPTS_DIR:-$PWD/prompts}"
-```
-
-## Direct Use
-
-```bash
-uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
-  llm-template-render --help
-
-uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
-  llm-template-inspect --help
-
-uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
-  llm-template-validate --help
-```
+Variables come from `bindings.data`. For large text (diffs, file contents), use `bindings.text_files` — the engine reads the file and exposes it as a string variable.
 
 ## Commands
 
-- `llm-template-render` renders one JSON request from stdin.
-- `llm-template-inspect` parses and returns template structure without rendering.
-- `llm-template-validate` reports whether the provided bindings can render a template.
+### `llm-template-render`
 
-TypeScript and JavaScript callers can use the JSON request and response shapes in
-`types.d.ts`.
+Takes a template + bindings, returns rendered output.
+
+**Input (stdin or `--input`):**
+
+```json
+{
+  "template": { "path": "prompts/review.md" },
+  "bindings": {
+    "data": {
+      "ticket": { "id": 42, "title": "broken import" },
+      "tier": "B"
+    },
+    "text_files": [{ "name": "diff", "path": "artifacts/current.diff" }]
+  },
+  "options": {
+    "search_paths": ["prompts", "prompts/snippets"]
+  }
+}
+```
+
+**Output:**
+
+````json
+{
+  "template": {
+    "path": "/abs/path/prompts/review.md",
+    "frontmatter": { "description": "Code review prompt" },
+    "body_template": "Review the following ticket..."
+  },
+  "rendered": {
+    "body": "Review the following ticket:\n\n**Ticket:** broken import\n**ID:** #42\n\n```diff\n+ import foo\n- import bar\n```\n\nTier: B",
+    "document": "---\ndescription: Code review prompt\n---\n\nReview the following ticket..."
+  }
+}
+````
+
+### `llm-template-inspect`
+
+Parse a template without rendering. Useful for checking frontmatter or body structure.
+
+**Input:**
+
+```json
+{
+  "template": { "path": "prompts/review.md" },
+  "options": { "search_paths": ["prompts"] }
+}
+```
+
+**Output:**
+
+```json
+{
+  "template": {
+    "path": "/abs/path/prompts/review.md",
+    "frontmatter": { "description": "Code review prompt" },
+    "body_template": "Review the following ticket..."
+  }
+}
+```
+
+### `llm-template-validate`
+
+Check if bindings satisfy all template variables before rendering.
+
+**Input:**
+
+```json
+{
+  "template": { "path": "prompts/review.md" },
+  "bindings": { "data": { "ticket": { "title": "broken" } } },
+  "options": { "search_paths": ["prompts"] }
+}
+```
+
+**Output:**
+
+```json
+{ "valid": false, "missing_bindings": ["ticket.id", "tier", "diff"] }
+```
+
+## Usage
+
+Invoke via `uvx` — no installation needed:
+
+```bash
+# Render
+echo '{"template":{"path":"prompts/review.md"},"bindings":{"data":{"ticket":{"id":42,"title":"broken"}}}}' \
+  | uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git llm-template-render
+
+# Inspect
+echo '{"template":{"path":"prompts/review.md"}}' \
+  | uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git llm-template-inspect
+
+# Validate
+echo '{"template":{"path":"prompts/review.md"},"bindings":{"data":{"ticket":{"id":42}}}}' \
+  | uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git llm-template-validate
+```
+
+For files instead of stdin, use `--input` and `--output`:
+
+```bash
+uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
+  llm-template-render --input request.json --output result.json
+```
+
+## Includes
+
+Templates can include other templates via Jinja `{% include %}`:
+
+```markdown
+---
+description: Main template
+---
+
+{% include "./partial.md" %}
+```
+
+Search paths are resolved in this order: template directory → `options.search_paths` → `$PROMPTS_DIR`.
+
+## Options
+
+| Option             | Default  | Description                                                       |
+| ------------------ | -------- | ----------------------------------------------------------------- |
+| `search_paths`     | `[]`     | Additional directories to search for includes                     |
+| `render_mode`      | `"body"` | `"body"` returns just the body; `"document"` includes frontmatter |
+| `strict_undefined` | `true`   | Raise an error if a template variable is missing                  |
 
 ## Development
 
-- `just install` installs the project and dev dependencies.
-- `just check` runs typecheck, lint, and tests.
-- `just build` builds a publication-ready wheel and sdist.
-- `just bump` increments the minor version with `uv version --bump minor`.
-
-Full interface and contract details live in `DESIGN.md`.
-
-## License
-
-MIT
+```bash
+just install   # install deps
+just check    # typecheck, lint, tests
+just build    # build wheel/sdist
+just bump     # bump minor version
+```
