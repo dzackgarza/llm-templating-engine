@@ -15,6 +15,7 @@ from llm_templating_engine import (
     TemplateReference,
     TextFileBinding,
     inspect_template,
+    list_templates,
     render_template,
     validate_template,
 )
@@ -183,3 +184,41 @@ def test_render_response_round_trips_as_json(tmp_path: Path) -> None:
     payload = json.loads(response.model_dump_json())
     assert payload["template"]["body_template"] == "Hello {{ name }}"
     assert payload["rendered"]["body"] == "Hello Alice"
+
+
+def test_list_templates_returns_inventory(tmp_path: Path) -> None:
+    # Create a nested template structure
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+    (tmp_path / "review.md").write_text(
+        "---\ndescription: Review prompt\n---\n\nReview {{ ticket }}"
+    )
+    (subdir / "summarize.md").write_text(
+        "---\ndescription: Summarize\ntags: [docs]\n---\n\nSummarize: {{ text }}"
+    )
+    (tmp_path / "bare.md").write_text("No frontmatter here")
+
+    response = list_templates(root=tmp_path)
+
+    assert response.root == str(tmp_path.resolve())
+    slugs = {entry.slug for entry in response.templates}
+    assert slugs == {"review.md", "subdir/summarize.md", "bare.md"}
+
+    review_entry = next(e for e in response.templates if e.slug == "review.md")
+    assert review_entry.description == "Review prompt"
+    assert review_entry.frontmatter == {"description": "Review prompt"}
+
+    bare_entry = next(e for e in response.templates if e.slug == "bare.md")
+    assert bare_entry.description is None
+    assert bare_entry.frontmatter == {}
+
+    summarize_entry = next(e for e in response.templates if e.slug == "subdir/summarize.md")
+    assert summarize_entry.description == "Summarize"
+    assert summarize_entry.frontmatter == {"description": "Summarize", "tags": ["docs"]}
+
+
+def test_list_templates_handles_missing_dir(tmp_path: Path) -> None:
+    nonexistent = tmp_path / "does_not_exist"
+    response = list_templates(root=nonexistent)
+    assert response.root == str(nonexistent.resolve())
+    assert response.templates == []

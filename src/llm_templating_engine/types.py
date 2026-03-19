@@ -128,3 +128,28 @@ class ErrorResponse(BaseModel):
     """Command error response."""
 
     error: ErrorDetail
+
+
+class TemplateEntry(BaseModel):
+    """A single template in the inventory."""
+
+    path: str = Field(..., description="Resolved filesystem path to the template.")
+    slug: str = Field(
+        ..., description="Relative path from the prompts root, usable as a template reference."
+    )
+    description: str | None = Field(
+        default=None, description="Description from frontmatter, if present."
+    )
+    frontmatter: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Full frontmatter metadata.",
+    )
+
+
+class ListTemplatesResponse(BaseModel):
+    """Inventory of available templates in the prompts directory."""
+
+    root: str = Field(..., description="The prompts directory that was scanned.")
+    templates: list[TemplateEntry] = Field(
+        default_factory=list, description="All discovered templates."
+    )

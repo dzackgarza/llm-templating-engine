@@ -13,6 +13,7 @@ from llm_templating_engine.core import (
     MissingVariablesError,
     TemplateFormatError,
     inspect_template,
+    list_templates,
     render_template,
     validate_template,
 )
@@ -46,6 +47,7 @@ app = _build_app(
 render_app = _build_app(help_text="Render one template request from JSON.")
 inspect_app = _build_app(help_text="Inspect one template request from JSON.")
 validate_app = _build_app(help_text="Validate one template request from JSON.")
+list_app = _build_app(help_text="List all templates in the prompts directory.")
 
 
 def _read_json_input(input_path: str | None) -> str:
@@ -102,6 +104,12 @@ def _execute_inspect(input_path: str | None, output_path: str | None) -> None:
 def _execute_validate(input_path: str | None, output_path: str | None) -> None:
     request = _parse_request(RenderTemplateRequest, input_path)
     response = validate_template(request)
+    _write_json_output(output_path, response)
+
+
+def _execute_list(input_path: str | None, output_path: str | None) -> None:
+    del input_path
+    response = list_templates()
     _write_json_output(output_path, response)
 
 
@@ -164,9 +172,21 @@ def validate_command(
     _command_wrapper(_execute_validate, input_path, output_path)
 
 
+@list_app.callback(invoke_without_command=True)
+def list_command(
+    output_path: Annotated[
+        str | None,
+        typer.Option("--output", "-o", help="Write response JSON to this file."),
+    ] = None,
+) -> None:
+    """List all templates in the prompts directory."""
+    _command_wrapper(_execute_list, None, output_path)
+
+
 app.add_typer(render_app, name="render", help="Render one template request.")
 app.add_typer(inspect_app, name="inspect", help="Inspect one template request.")
 app.add_typer(validate_app, name="validate", help="Validate one template request.")
+app.add_typer(list_app, name="list", help="List all available templates.")
 
 
 def main() -> None:
@@ -187,6 +207,11 @@ def inspect_main() -> None:
 def validate_main() -> None:
     """Run the standalone llm-template-validate command."""
     validate_app()
+
+
+def list_main() -> None:
+    """Run the standalone llm-template-list command."""
+    list_app()
 
 
 if __name__ == "__main__":

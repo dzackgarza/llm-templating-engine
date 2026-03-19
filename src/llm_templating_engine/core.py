@@ -15,10 +15,12 @@ from llm_templating_engine.types import (
     Bindings,
     InspectTemplateRequest,
     InspectTemplateResponse,
+    ListTemplatesResponse,
     RenderedTemplate,
     RenderTemplateRequest,
     RenderTemplateResponse,
     TemplateDocument,
+    TemplateEntry,
     TemplateOptions,
     TemplateReference,
     ValidateTemplateResponse,
@@ -343,6 +345,33 @@ def inspect_template(request: InspectTemplateRequest) -> InspectTemplateResponse
     """Inspect a template without rendering it."""
     del request.options
     return InspectTemplateResponse(template=load_template_document(request.template))
+
+
+def list_templates(root: Path | None = None) -> ListTemplatesResponse:
+    """Walk the prompts directory and return an inventory of all templates."""
+    prompts_root = (root or default_prompts_dir()).resolve()
+    templates: list[TemplateEntry] = []
+
+    if prompts_root.is_dir():
+        for path in sorted(prompts_root.rglob("*.md")):
+            frontmatter: dict[str, Any] = {}
+            description: str | None = None
+            try:
+                frontmatter, _ = _split_frontmatter(path.read_text())
+                description = frontmatter.get("description")  # type: ignore[assignment]
+            except (OSError, TemplateFormatError):
+                pass
+            slug = str(path.relative_to(prompts_root))
+            templates.append(
+                TemplateEntry(
+                    path=str(path),
+                    slug=slug,
+                    description=description,
+                    frontmatter=frontmatter,
+                )
+            )
+
+    return ListTemplatesResponse(root=str(prompts_root), templates=templates)
 
 
 def validate_template(request: RenderTemplateRequest) -> ValidateTemplateResponse:
