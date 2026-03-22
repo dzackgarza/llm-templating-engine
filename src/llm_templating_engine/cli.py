@@ -214,10 +214,5 @@ def validate_main() -> None:
     validate_app()
 
 
-def list_main() -> None:
-    """Run the standalone llm-template-list command."""
-    list_app()
-
-
 if __name__ == "__main__":
     main()
