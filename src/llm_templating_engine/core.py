@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from jinja2 import BaseLoader, ChoiceLoader, DictLoader, Environment, StrictUndefined, meta
+from jinja2 import (
+    BaseLoader,
+    ChoiceLoader,
+    DictLoader,
+    Environment,
+    StrictUndefined,
+    Undefined,
+    meta,
+)
 from jinja2.exceptions import TemplateNotFound, UndefinedError
 
 from llm_templating_engine.types import (
@@ -23,6 +31,7 @@ from llm_templating_engine.types import (
     TemplateEntry,
     TemplateOptions,
     TemplateReference,
+    TextFileBinding,
     ValidateTemplateResponse,
 )
 
@@ -131,6 +140,39 @@ def _template_base_directory(document: TemplateDocument) -> Path | None:
     return Path(identifier).expanduser().resolve().parent
 
 
+def _prompt_search_paths(
+    *,
+    document: TemplateDocument | None,
+    options: TemplateOptions,
+) -> list[Path]:
+    """Build the ordered search-path list for prompt includes."""
+    search_paths = [Path(path).expanduser().resolve() for path in options.search_paths]
+    if document is None:
+        search_paths.append(default_prompts_dir())
+        return search_paths
+
+    base_directory = _template_base_directory(document)
+    if base_directory is not None:
+        search_paths.insert(0, base_directory)
+    search_paths.append(default_prompts_dir())
+    return search_paths
+
+
+def _inline_templates(document: TemplateDocument | None) -> dict[str, str]:
+    """Return the inline-template mapping for the active document."""
+    if document is None:
+        return {}
+    return {_template_identifier(document): document.body_template}
+
+
+def _build_loader(search_paths: list[Path], inline_templates: dict[str, str]) -> BaseLoader:
+    """Construct the Jinja loader stack for prompt rendering."""
+    loaders: list[BaseLoader] = [PromptTemplateLoader(search_paths)]
+    if inline_templates:
+        loaders.insert(0, DictLoader(inline_templates))
+    return loaders[0] if len(loaders) == 1 else ChoiceLoader(loaders)
+
+
 class PromptTemplateLoader(BaseLoader):
     """Load prompt templates and strip frontmatter from included documents."""
 
@@ -185,26 +227,12 @@ def build_prompt_environment(
 ) -> PromptTemplateEnvironment:
     """Create a Jinja environment for a template document."""
     effective_options = options or TemplateOptions()
-    search_paths = [Path(path).expanduser().resolve() for path in effective_options.search_paths]
-    if document is not None:
-        base_directory = _template_base_directory(document)
-        if base_directory is not None:
-            search_paths.insert(0, base_directory)
-    search_paths.append(default_prompts_dir())
-
-    inline_templates: dict[str, str] = {}
-    if document is not None:
-        inline_templates[_template_identifier(document)] = document.body_template
-
-    loaders: list[BaseLoader] = []
-    if inline_templates:
-        loaders.append(DictLoader(inline_templates))
-    loaders.append(PromptTemplateLoader(search_paths))
-    loader = loaders[0] if len(loaders) == 1 else ChoiceLoader(loaders)
+    search_paths = _prompt_search_paths(document=document, options=effective_options)
+    loader = _build_loader(search_paths, _inline_templates(document))
 
     return PromptTemplateEnvironment(
         loader=loader,
-        undefined=StrictUndefined if effective_options.strict_undefined else None,
+        undefined=StrictUndefined if effective_options.strict_undefined else Undefined,
     )
 
 
@@ -244,6 +272,29 @@ def _resolve_binding_path(raw_path: str, document: TemplateDocument) -> Path:
     return (Path.cwd() / candidate).resolve()
 
 
+def _assert_binding_name_available(
+    name: str,
+    *,
+    materialized: dict[str, Any],
+    data_bindings: dict[str, Any],
+) -> None:
+    """Reject binding names that collide with already-materialized inputs."""
+    if name in materialized or name in data_bindings:
+        raise ValueError(f"Duplicate binding name: {name}")
+
+
+def _materialize_text_file_binding(
+    text_file: TextFileBinding,
+    *,
+    document: TemplateDocument,
+) -> tuple[str, str]:
+    """Read one text-file binding from disk."""
+    resolved_path = _resolve_binding_path(text_file.path, document)
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"Text file binding not found: {resolved_path}")
+    return text_file.name, resolved_path.read_text()
+
+
 def materialize_bindings(
     document: TemplateDocument,
     bindings: Bindings | None = None,
@@ -253,12 +304,13 @@ def materialize_bindings(
     materialized: dict[str, Any] = {}
 
     for text_file in binding_spec.text_files:
-        if text_file.name in materialized or text_file.name in binding_spec.data:
-            raise ValueError(f"Duplicate binding name: {text_file.name}")
-        resolved_path = _resolve_binding_path(text_file.path, document)
-        if not resolved_path.exists():
-            raise FileNotFoundError(f"Text file binding not found: {resolved_path}")
-        materialized[text_file.name] = resolved_path.read_text()
+        _assert_binding_name_available(
+            text_file.name,
+            materialized=materialized,
+            data_bindings=binding_spec.data,
+        )
+        name, content = _materialize_text_file_binding(text_file, document=document)
+        materialized[name] = content
 
     for key, value in binding_spec.data.items():
         if key in materialized:
@@ -315,7 +367,9 @@ def _collect_template_variables(
         return set()
     seen.add(template_name)
 
-    source, _, _ = environment.loader.get_source(environment, template_name)
+    loader = environment.loader
+    assert loader is not None
+    source, _, _ = loader.get_source(environment, template_name)
     parsed = environment.parse(source)
     variables = set(meta.find_undeclared_variables(parsed)) - set(environment.globals)
     referenced_templates = meta.find_referenced_templates(parsed)
@@ -358,7 +412,9 @@ def list_templates(root: Path | None = None) -> ListTemplatesResponse:
             description: str | None = None
             try:
                 frontmatter, _ = _split_frontmatter(path.read_text())
-                description = frontmatter.get("description")  # type: ignore[assignment]
+                raw_description = frontmatter.get("description")
+                if isinstance(raw_description, str):
+                    description = raw_description
             except (OSError, TemplateFormatError):
                 pass
             slug = str(path.relative_to(prompts_root))

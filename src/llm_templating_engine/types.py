@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -52,10 +52,6 @@ class TemplateOptions(BaseModel):
     search_paths: list[str] = Field(
         default_factory=list,
         description="Additional search paths for includes and imports.",
-    )
-    render_mode: Literal["body", "document"] = Field(
-        default="body",
-        description="Preferred rendered view for callers.",
     )
     strict_undefined: bool = Field(
         default=True,

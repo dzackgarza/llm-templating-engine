@@ -188,14 +188,13 @@ Search paths are resolved in this order: template directory → `options.search_
 | Option             | Default  | Description                                                       |
 | ------------------ | -------- | ----------------------------------------------------------------- |
 | `search_paths`     | `[]`     | Additional directories to search for includes                     |
-| `render_mode`      | `"body"` | `"body"` returns just the body; `"document"` includes frontmatter |
 | `strict_undefined` | `true`   | Raise an error if a template variable is missing                  |
 
 ## Development
 
 ```bash
 just install   # install deps
-just check    # typecheck, lint, tests
+just test     # typecheck, lint, tests
 just build    # build wheel/sdist
 just bump     # bump minor version
 ```

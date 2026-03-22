@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, TypeVar
 
@@ -113,7 +114,11 @@ def _execute_list(input_path: str | None, output_path: str | None) -> None:
     _write_json_output(output_path, response)
 
 
-def _command_wrapper(executor: callable, input_path: str | None, output_path: str | None) -> None:
+def _command_wrapper(
+    executor: Callable[[str | None, str | None], None],
+    input_path: str | None,
+    output_path: str | None,
+) -> None:
     """Execute one command and emit a structured error payload on failure."""
     try:
         executor(input_path, output_path)

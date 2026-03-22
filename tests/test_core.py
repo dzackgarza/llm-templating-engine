@@ -14,6 +14,7 @@ from llm_templating_engine import (
     TemplateOptions,
     TemplateReference,
     TextFileBinding,
+    build_prompt_environment,
     inspect_template,
     list_templates,
     render_template,
@@ -109,6 +110,22 @@ def test_render_template_supports_path_templates_without_frontmatter(tmp_path: P
     assert response.rendered.document == "Tier model-self"
 
 
+def test_build_prompt_environment_supports_search_paths_without_document(
+    tmp_path: Path,
+) -> None:
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "greeting.md").write_text("Hello {{ name }}")
+
+    environment = build_prompt_environment(
+        options=TemplateOptions(search_paths=[str(prompts_dir)]),
+    )
+
+    rendered = environment.get_template("greeting.md").render({"name": "Alice"})
+
+    assert rendered == "Hello Alice"
+
+
 def test_validate_template_reports_missing_bindings(tmp_path: Path) -> None:
     template = tmp_path / "review.md"
     template.write_text("{{ ticket.title }}\n{{ diff }}\n{{ extra }}")
@@ -157,6 +174,22 @@ def test_render_template_rejects_duplicate_binding_names(tmp_path: Path) -> None
                 bindings=Bindings(
                     data={"diff": "inline"},
                     text_files=[TextFileBinding(name="diff", path=str(diff_file))],
+                ),
+            )
+        )
+
+
+def test_render_template_raises_for_missing_text_file_binding(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    missing_file = tmp_path / "missing.txt"
+    template.write_text("{{ diff }}")
+
+    with pytest.raises(FileNotFoundError):
+        render_template(
+            RenderTemplateRequest(
+                template=TemplateReference(path=str(template)),
+                bindings=Bindings(
+                    text_files=[TextFileBinding(name="diff", path=str(missing_file))],
                 ),
             )
         )
