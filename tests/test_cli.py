@@ -89,6 +89,78 @@ def test_validate_command_reports_missing_bindings(tmp_path: Path) -> None:
     assert payload["missing_bindings"] == ["diff"]
 
 
+def test_render_context_flag_appends_extra_context_blocks(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    ctx1 = tmp_path / "skill1.md"
+    ctx2 = tmp_path / "skill2.md"
+    template.write_text("Hello {{ name }}")
+    ctx1.write_text("---\ndescription: Skill one\n---\n\nFirst context body.")
+    ctx2.write_text("Second context body, no frontmatter.")
+
+    request = {
+        "template": {"path": str(template)},
+        "bindings": {"data": {"name": "Alice"}},
+    }
+
+    result = run_cli(
+        "render",
+        "--context",
+        str(ctx1),
+        "--context",
+        str(ctx2),
+        stdin=json.dumps(request),
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    body = payload["rendered"]["body"]
+    assert body.startswith("Hello Alice")
+    assert "<extra-context>\nFirst context body.\n</extra-context>" in body
+    assert "<extra-context>\nSecond context body, no frontmatter.\n</extra-context>" in body
+
+
+def test_render_context_in_json_request_appends_extra_context_blocks(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    ctx = tmp_path / "context.md"
+    template.write_text("Task: {{ task }}")
+    ctx.write_text("---\ndescription: Extra\n---\n\nContext body here.")
+
+    request = {
+        "template": {"path": str(template)},
+        "bindings": {"data": {"task": "fix bug"}},
+        "context_files": [str(ctx)],
+    }
+
+    result = run_cli("render", stdin=json.dumps(request))
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    body = payload["rendered"]["body"]
+    assert "Task: fix bug" in body
+    assert "<extra-context>\nContext body here.\n</extra-context>" in body
+
+
+def test_render_context_missing_file_returns_error(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    template.write_text("Hello {{ name }}")
+
+    request = {
+        "template": {"path": str(template)},
+        "bindings": {"data": {"name": "Alice"}},
+    }
+
+    result = run_cli(
+        "render",
+        "--context",
+        str(tmp_path / "nonexistent.md"),
+        stdin=json.dumps(request),
+    )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["error"]["type"] == "FileNotFoundError"
+
+
 def test_standalone_render_script_matches_main_command(tmp_path: Path) -> None:
     template = tmp_path / "review.md"
     template.write_text("Hello {{ name }}")

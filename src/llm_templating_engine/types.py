@@ -97,6 +97,13 @@ class RenderTemplateRequest(BaseModel):
     template: TemplateReference
     bindings: Bindings = Field(default_factory=Bindings)
     options: TemplateOptions = Field(default_factory=TemplateOptions)
+    context_files: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Absolute paths to markdown files whose bodies are appended unconditionally "
+            "as <extra-context> blocks after the rendered output."
+        ),
+    )
 
 
 class RenderTemplateResponse(BaseModel):

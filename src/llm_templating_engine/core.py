@@ -395,6 +395,18 @@ def _missing_name_from_error(error: UndefinedError) -> str:
     return "<unknown>"
 
 
+def _load_context_blocks(context_files: list[str]) -> str:
+    """Read markdown context files and return concatenated <extra-context> blocks."""
+    blocks: list[str] = []
+    for raw_path in context_files:
+        path = Path(raw_path).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"Context file not found: {path}")
+        _, body = _split_frontmatter(path.read_text())
+        blocks.append(f"<extra-context>\n{body.strip()}\n</extra-context>")
+    return "\n\n".join(blocks)
+
+
 def inspect_template(request: InspectTemplateRequest) -> InspectTemplateResponse:
     """Inspect a template without rendering it."""
     del request.options
@@ -472,6 +484,11 @@ def render_template(request: RenderTemplateRequest) -> RenderTemplateResponse:
         bindings=materialized,
         options=request.options,
     )
+
+    if request.context_files:
+        context_blocks = _load_context_blocks(request.context_files)
+        rendered_body = f"{rendered_body}\n\n{context_blocks}"
+
     rendered_document = f"{_reconstruct_frontmatter(document.frontmatter)}{rendered_body}"
 
     return RenderTemplateResponse(

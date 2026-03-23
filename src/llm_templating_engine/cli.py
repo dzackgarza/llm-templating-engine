@@ -90,8 +90,16 @@ def _parse_request(model_type: type[RequestModelT], input_path: str | None) -> R
         raise ValueError(str(exc)) from exc
 
 
-def _execute_render(input_path: str | None, output_path: str | None) -> None:
+def _execute_render(
+    input_path: str | None,
+    output_path: str | None,
+    context_paths: list[str] | None = None,
+) -> None:
     request = _parse_request(RenderTemplateRequest, input_path)
+    if context_paths:
+        request = request.model_copy(
+            update={"context_files": list(request.context_files) + context_paths}
+        )
     response = render_template(request)
     _write_json_output(output_path, response)
 
@@ -142,9 +150,21 @@ def render_command(
         str | None,
         typer.Option("--output", "-o", help="Write response JSON to this file."),
     ] = None,
+    context: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--context",
+            "-c",
+            help="Path to a markdown context file. May be repeated.",
+        ),
+    ] = None,
 ) -> None:
     """Render a template request."""
-    _command_wrapper(_execute_render, input_path, output_path)
+    try:
+        _execute_render(input_path, output_path, context_paths=context)
+    except (FileNotFoundError, MissingVariablesError, TemplateFormatError, ValueError) as exc:
+        _write_error(output_path, exc)
+        raise typer.Exit(code=1) from exc
 
 
 @inspect_app.callback(invoke_without_command=True)

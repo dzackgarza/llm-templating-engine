@@ -219,6 +219,44 @@ def test_render_response_round_trips_as_json(tmp_path: Path) -> None:
     assert payload["rendered"]["body"] == "Hello Alice"
 
 
+def test_render_template_appends_context_files_as_extra_context_blocks(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    ctx1 = tmp_path / "skill1.md"
+    ctx2 = tmp_path / "skill2.md"
+    template.write_text("---\ndescription: Review\n---\n\nReview {{ ticket }}")
+    ctx1.write_text("---\ndescription: Skill one\n---\n\nFirst context body.")
+    ctx2.write_text("Second context body, no frontmatter.")
+
+    response = render_template(
+        RenderTemplateRequest(
+            template=TemplateReference(path=str(template)),
+            bindings=Bindings(data={"ticket": "broken import"}),
+            context_files=[str(ctx1), str(ctx2)],
+        )
+    )
+
+    body = response.rendered.body
+    assert body.startswith("Review broken import")
+    assert "<extra-context>\nFirst context body.\n</extra-context>" in body
+    assert "<extra-context>\nSecond context body, no frontmatter.\n</extra-context>" in body
+    assert body.index("First") < body.index("Second")
+
+
+def test_render_template_with_no_context_files_is_unchanged(tmp_path: Path) -> None:
+    template = tmp_path / "review.md"
+    template.write_text("Hello {{ name }}")
+
+    response = render_template(
+        RenderTemplateRequest(
+            template=TemplateReference(path=str(template)),
+            bindings=Bindings(data={"name": "Alice"}),
+        )
+    )
+
+    assert response.rendered.body == "Hello Alice"
+    assert "<extra-context>" not in response.rendered.body
+
+
 def test_list_templates_returns_inventory(tmp_path: Path) -> None:
     # Create a nested template structure
     subdir = tmp_path / "subdir"

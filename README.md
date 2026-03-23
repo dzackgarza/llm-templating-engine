@@ -34,7 +34,7 @@ Variables come from `bindings.data`. For large text (diffs, file contents), use 
 
 ### `llm-template-render`
 
-Takes a template + bindings, returns rendered output.
+Takes a template + bindings, returns rendered output. Context files are always appended after the rendered body as `<extra-context>` blocks — templates do not need to opt in.
 
 **Input (stdin or `--input`):**
 
@@ -50,7 +50,8 @@ Takes a template + bindings, returns rendered output.
   },
   "options": {
     "search_paths": ["prompts", "prompts/snippets"]
-  }
+  },
+  "context_files": ["/abs/path/SKILL.md", "/abs/path/guidelines.md"]
 }
 ```
 
@@ -160,6 +161,13 @@ echo '{"template":{"path":"prompts/review.md"},"bindings":{"data":{"ticket":{"id
 # List inventory
 uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
   llm-templating-engine list
+
+# Render with extra context (repeatable)
+uvx --from git+https://github.com/dzackgarza/llm-templating-engine.git \
+  llm-template-render \
+  --context /abs/path/SKILL.md \
+  --context /abs/path/guidelines.md \
+  --input request.json
 ```
 
 For files instead of stdin, use `--input` and `--output`:
@@ -185,10 +193,10 @@ Search paths are resolved in this order: template directory → `options.search_
 
 ## Options
 
-| Option             | Default  | Description                                                       |
-| ------------------ | -------- | ----------------------------------------------------------------- |
-| `search_paths`     | `[]`     | Additional directories to search for includes                     |
-| `strict_undefined` | `true`   | Raise an error if a template variable is missing                  |
+| Option             | Default | Description                                      |
+| ------------------ | ------- | ------------------------------------------------ |
+| `search_paths`     | `[]`    | Additional directories to search for includes    |
+| `strict_undefined` | `true`  | Raise an error if a template variable is missing |
 
 ## Development
 
